@@ -1,11 +1,12 @@
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, HTTPException, Response, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Response, Request, Depends
 
 from configs.config import settings
 from models import User
+from schemas import UserSignup
+from schemas.User import UserLogin
 from utils import hash_password, verify_password
-from utils.password import create_access_token
+from utils.password import create_access_token, get_current_user
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ oauth.register(
 )
 
 @router.post("/signup")
-async def signup(user_data: BaseModel(email=str, password=str, full_name=str)):
+async def signup(user_data: UserSignup):
     existing_user = await User.find_one(User.email == user_data.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -31,11 +32,11 @@ async def signup(user_data: BaseModel(email=str, password=str, full_name=str)):
         full_name=user_data.full_name,
         hashed_password=hash_password(user_data.password)
     )
-    await user.insert()
+    await user.create()
     return {"message": "User created successfully"}
 
 @router.post("/login")
-async def login(user_data: BaseModel(email=str, password=str), response: Response):
+async def login(user_data: UserLogin, response: Response):
     user = await User.find_one(User.email == user_data.email)
     if not user or not verify_password(user_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -62,7 +63,7 @@ async def auth_google(request: Request, response: Response):
             google_id=user_info["sub"],
             picture=user_info.get("picture")
         )
-        await user.save()
+        await user.create()
 
     access_token = create_access_token({"sub": user.email})
     response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="strict")
@@ -70,6 +71,6 @@ async def auth_google(request: Request, response: Response):
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(response: Response, _= Depends(get_current_user)):
     response.delete_cookie("access_token")
     return {"message": "Logged out successfully"}
